@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive, nosnippet">
+<title>Kennisbank</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#08090a;--vlak:rgba(255,255,255,.02);--vlak2:rgba(255,255,255,.04);
+        --rand:rgba(255,255,255,.08);--tekst:#f7f8f8;--tekst3:#8a8f98;--tekst4:#62666d;
+        --indigo:#5e6ad2;--violet:#7170ff;--rood:#e5484d}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       background:var(--bg);color:var(--tekst);padding:24px;
+       font-family:'Inter',system-ui,-apple-system,'Segoe UI',sans-serif;
+       font-feature-settings:"cv01","ss03";-webkit-font-smoothing:antialiased}
+  .kluis{max-width:390px;width:100%}
+  .slot{width:38px;height:38px;border:1px solid var(--rand);border-radius:9px;
+        display:flex;align-items:center;justify-content:center;margin-bottom:20px;
+        color:var(--tekst3);font-size:17px;background:var(--vlak)}
+  h1{font-size:20px;font-weight:510;letter-spacing:-.3px;margin:0 0 5px;line-height:1.25}
+  p.sub{color:var(--tekst4);font-size:13.5px;margin:0 0 22px;line-height:1.55}
+  label{display:block;font-size:11.5px;color:var(--tekst4);margin-bottom:6px;font-weight:510}
+  input{width:100%;padding:9px 13px;font:400 14px 'Inter',sans-serif;
+        font-feature-settings:"cv01","ss03";background:var(--vlak);color:var(--tekst);
+        border:1px solid var(--rand);border-radius:6px;letter-spacing:-.13px}
+  input:focus{outline:none;border-color:var(--indigo);background:var(--vlak2)}
+  button{width:100%;margin-top:13px;padding:9px;border-radius:6px;cursor:pointer;
+         font:510 13.5px 'Inter',sans-serif;font-feature-settings:"cv01","ss03";
+         background:var(--indigo);color:#fff;border:1px solid var(--indigo);transition:.13s}
+  button:hover:not(:disabled){background:#828fff;border-color:#828fff}
+  button:disabled{opacity:.55;cursor:default}
+  .fout{color:#ff8589;font-size:12.5px;margin-top:12px;display:none;line-height:1.5}
+  .bezig{color:var(--tekst4);font-size:12.5px;margin-top:12px;display:none}
+  .voet{margin-top:26px;padding-top:18px;border-top:1px solid rgba(255,255,255,.05);
+        font-size:11.5px;color:var(--tekst4);line-height:1.6}
+  .balkje{height:3px;background:var(--vlak2);border-radius:2px;margin-top:11px;
+          overflow:hidden;display:none}
+  .balkje div{height:100%;background:var(--violet);width:0;transition:width .3s}
+</style>
+</head>
+<body>
+<div class="kluis">
+  <div class="slot">&#9679;</div>
+  <h1>Kennisbank Co&ouml;rdinator Digitaal</h1>
+  <p class="sub">Deze pagina is versleuteld. Voer het wachtwoord in om de inhoud te openen.</p>
+
+  <label for="ww">Wachtwoord</label>
+  <input id="ww" type="password" autocomplete="current-password" autofocus spellcheck="false">
+  <button id="knop">Openen</button>
+  <div class="balkje" id="balkje"><div id="vulling"></div></div>
+  <div class="bezig" id="bezig">Ontsleutelen&hellip;</div>
+  <div class="fout" id="fout"></div>
+
+  <div class="voet">
+    De inhoud staat versleuteld op de server en wordt alleen in je eigen browser
+    ontsleuteld. Wie het wachtwoord niet heeft, ziet onleesbare gegevens.
+  </div>
+</div>
+
+<script>
+const knop = document.getElementById('knop');
+const veld = document.getElementById('ww');
+const fout = document.getElementById('fout');
+const bezig = document.getElementById('bezig');
+const balkje = document.getElementById('balkje');
+const vulling = document.getElementById('vulling');
+
+function toonFout(tekst) {
+  fout.textContent = tekst;
+  fout.style.display = 'block';
+  bezig.style.display = 'none';
+  balkje.style.display = 'none';
+  knop.disabled = false;
+  knop.textContent = 'Openen';
+}
+
+async function ontgrendel() {
+  const ww = veld.value;
+  if (!ww) { toonFout('Vul een wachtwoord in.'); return; }
+
+  fout.style.display = 'none';
+  knop.disabled = true;
+  knop.textContent = 'Bezig\u2026';
+  bezig.style.display = 'block';
+  balkje.style.display = 'block';
+  vulling.style.width = '15%';
+
+  let doos;
+  try {
+    const r = await fetch('kluis.json');
+    if (!r.ok) throw new Error('kluis niet gevonden');
+    doos = await r.json();
+  } catch (e) {
+    toonFout('De versleutelde inhoud kon niet geladen worden.');
+    return;
+  }
+  vulling.style.width = '45%';
+
+  try {
+    const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    const basis = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(ww), 'PBKDF2', false, ['deriveKey']);
+    const sleutel = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: b64(doos.s), iterations: doos.i, hash: 'SHA-256' },
+      basis, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    vulling.style.width = '70%';
+
+    const plat = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: b64(doos.n) }, sleutel, b64(doos.c));
+    vulling.style.width = '88%';
+
+    // Uitpakken met DecompressionStream (alle moderne browsers).
+    const stroom = new Response(
+      new Blob([plat]).stream().pipeThrough(new DecompressionStream('gzip')));
+    const bundel = JSON.parse(await stroom.text());
+    vulling.style.width = '100%';
+
+    // In sessieopslag zetten zodat de subpagina's erbij kunnen.
+    sessionStorage.setItem('kb-bundel', JSON.stringify(bundel));
+
+    const html = atob(bundel['index.html']);
+    document.open();
+    document.write(herschrijf(html, bundel));
+    document.close();
+  } catch (e) {
+    toonFout('Onjuist wachtwoord. Probeer het opnieuw.');
+  }
+}
+
+// Vervangt verwijzingen naar css/js/pagina's door ingebouwde inhoud,
+// zodat de site werkt zonder losse bestanden op de server.
+function herschrijf(html, bundel) {
+  const tekst = p => new TextDecoder().decode(
+    Uint8Array.from(atob(bundel[p] || ''), c => c.charCodeAt(0)));
+
+  html = html.replace(/<link[^>]*href="([^"]*\.css)"[^>]*>/g,
+    (m, p) => bundel[p] ? '<style>' + tekst(p) + '</style>' : m);
+  html = html.replace(/<script src="([^"]*\.js)"><\/script>/g,
+    (m, p) => bundel[p] ? '<script>' + tekst(p) + '<\/script>' : m);
+
+  // Interne links onderscheppen: die halen hun pagina uit de bundel.
+  html = html.replace(/<\/body>/, `
+<script>
+document.addEventListener('click', function (e) {
+  const a = e.target.closest('a');
+  if (!a) return;
+  const href = a.getAttribute('href');
+  if (!href || /^(https?:|mailto:|#)/.test(href)) return;
+  e.preventDefault();
+  const b = JSON.parse(sessionStorage.getItem('kb-bundel') || '{}');
+  const sleutel = href.replace(/^\\.\\//, '').replace(/^\\.\\.\\//, '');
+  if (!b[sleutel]) { alert('Pagina niet gevonden in de bundel: ' + sleutel); return; }
+  const t = p => new TextDecoder().decode(Uint8Array.from(atob(b[p]||''), c=>c.charCodeAt(0)));
+  let h = t(sleutel);
+  h = h.replace(/<link[^>]*href="([^"]*\\.css)"[^>]*>/g, function(m,p){
+    p = p.replace(/^\\.\\.\\//,''); return b[p] ? '<style>'+t(p)+'<\\/style>' : m; });
+  h = h.replace(/<script src="([^"]*\\.js)"><\\/script>/g, function(m,p){
+    p = p.replace(/^\\.\\.\\//,''); return b[p] ? '<script>'+t(p)+'<\\/script>' : m; });
+  document.open(); document.write(h); document.close();
+});
+<\/script></body>`);
+  return html;
+}
+
+knop.addEventListener('click', ontgrendel);
+veld.addEventListener('keydown', e => { if (e.key === 'Enter') ontgrendel(); });
+</script>
+</body>
+</html>
