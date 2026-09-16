@@ -52,6 +52,12 @@
   <div class="balkje" id="balkje"><div id="vulling"></div></div>
   <div class="bezig" id="bezig">Ontsleutelen&hellip;</div>
   <div class="fout" id="fout"></div>
+  <div style="margin-top:10px;font-size:11.5px">
+    <a href="#" id="zelftest" style="color:var(--tekst4)">Werkt het niet? Voer een zelftest uit</a>
+  </div>
+  <div id="testuitslag" style="display:none;margin-top:12px;padding:11px 13px;
+       background:rgba(255,255,255,.03);border:1px solid var(--rand);border-radius:6px;
+       font-size:11.5px;line-height:1.7;color:var(--tekst3)"></div>
 
   <div class="voet">
     De inhoud staat versleuteld op de server en wordt alleen in je eigen browser
@@ -98,35 +104,72 @@ async function ontgrendel() {
   }
   vulling.style.width = '45%';
 
+  let sleutel;
   try {
     const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
     const basis = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(ww), 'PBKDF2', false, ['deriveKey']);
-    const sleutel = await crypto.subtle.deriveKey(
+    sleutel = await crypto.subtle.deriveKey(
       { name: 'PBKDF2', salt: b64(doos.s), iterations: doos.i, hash: 'SHA-256' },
       basis, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
-    vulling.style.width = '70%';
+  } catch (e) {
+    toonFout('Je browser ondersteunt de benodigde versleuteling niet. ' +
+             'Let op: dit werkt alleen via https:// of localhost, niet via file://.');
+    return;
+  }
+  vulling.style.width = '70%';
 
-    const plat = await crypto.subtle.decrypt(
+  // Stap 1: ontsleutelen. Faalt dit, dan is het wachtwoord onjuist.
+  let plat;
+  try {
+    const b64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    plat = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: b64(doos.n) }, sleutel, b64(doos.c));
-    vulling.style.width = '88%';
+  } catch (e) {
+    toonFout('Onjuist wachtwoord. Probeer het opnieuw.');
+    return;
+  }
+  vulling.style.width = '88%';
 
-    // Uitpakken met DecompressionStream (alle moderne browsers).
-    const stroom = new Response(
-      new Blob([plat]).stream().pipeThrough(new DecompressionStream('gzip')));
-    const bundel = JSON.parse(await stroom.text());
+  // Stap 2: uitpakken en tonen. Faalt dit, dan lag het NIET aan het wachtwoord.
+  try {
+    let tekst;
+    if (typeof DecompressionStream === 'function') {
+      const stroom = new Response(
+        new Blob([plat]).stream().pipeThrough(new DecompressionStream('gzip')));
+      tekst = await stroom.text();
+    } else {
+      throw new Error('DecompressionStream ontbreekt in deze browser');
+    }
+    const bundel = JSON.parse(tekst);
     vulling.style.width = '100%';
 
-    // In sessieopslag zetten zodat de subpagina's erbij kunnen.
     sessionStorage.setItem('kb-bundel', JSON.stringify(bundel));
 
-    const html = atob(bundel['index.html']);
+    const html = uitBundel(bundel, 'index.html');
     document.open();
     document.write(herschrijf(html, bundel));
     document.close();
   } catch (e) {
-    toonFout('Onjuist wachtwoord. Probeer het opnieuw.');
+    const m = (e && e.message) ? e.message : String(e);
+    if (m.indexOf('DecompressionStream') >= 0) {
+      toonFout('Je wachtwoord was goed, maar deze browser kan de inhoud niet ' +
+               'uitpakken. Probeer Chrome, Edge of een recente Firefox/Safari.');
+    } else {
+      toonFout('Het wachtwoord klopte, maar de inhoud kon niet worden getoond. ' +
+               'Technische melding: ' + m);
+    }
   }
+}
+
+// Haalt een bestand uit de bundel en decodeert het als UTF-8.
+// Let op: atob() alleen is niet genoeg - dat breekt op accenten en
+// aanhalingstekens, en die staan overal in Nederlandse tekst.
+function uitBundel(bundel, pad) {
+  const b = bundel[pad];
+  if (!b) return '';
+  return new TextDecoder('utf-8').decode(
+    Uint8Array.from(atob(b), c => c.charCodeAt(0)));
 }
 
 // Vervangt verwijzingen naar css/js/pagina's door ingebouwde inhoud,
@@ -166,6 +209,54 @@ document.addEventListener('click', function (e) {
 
 knop.addEventListener('click', ontgrendel);
 veld.addEventListener('keydown', e => { if (e.key === 'Enter') ontgrendel(); });
+
+// Zelftest: controleert stap voor stap wat er wel en niet werkt,
+// zonder het wachtwoord te tonen of te versturen.
+document.getElementById('zelftest').addEventListener('click', async e => {
+  e.preventDefault();
+  const uit = document.getElementById('testuitslag');
+  uit.style.display = 'block';
+  const regels = [];
+  const ok = (t, g) => regels.push((g ? '\u2713 ' : '\u2717 ') + t);
+
+  ok('Beveiligde verbinding (https of localhost)',
+     location.protocol === 'https:' || location.hostname === 'localhost');
+  ok('Browser ondersteunt versleuteling (Web Crypto)',
+     !!(window.crypto && window.crypto.subtle));
+  ok('Browser kan uitpakken (DecompressionStream)',
+     typeof DecompressionStream === 'function');
+
+  let doos = null;
+  try {
+    const r = await fetch('kluis.json', { cache: 'no-store' });
+    doos = await r.json();
+    ok('Versleutelde inhoud gevonden (' +
+       Math.round(doos.c.length / 1024) + ' kB)', true);
+    ok('Kluisgegevens compleet', !!(doos.s && doos.n && doos.c && doos.i));
+    regels.push('&nbsp;&nbsp;&nbsp;kluis-kenmerk: ' + doos.s.slice(0, 10) +
+                ' \u00b7 ' + doos.i.toLocaleString('nl') + ' rondes');
+  } catch (err) {
+    ok('Versleutelde inhoud kon niet geladen worden', false);
+  }
+
+  const ingevuld = veld.value;
+  if (ingevuld) {
+    regels.push('&nbsp;');
+    regels.push('Ingevoerd wachtwoord: ' + ingevuld.length + ' tekens' +
+      (ingevuld !== ingevuld.trim() ? ' <b>(bevat spatie aan begin of eind!)</b>' : ''));
+  } else {
+    regels.push('&nbsp;');
+    regels.push('Tip: vul eerst je wachtwoord in en klik dan opnieuw op zelftest.');
+  }
+
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+    regels.push('&nbsp;');
+    regels.push('<b>Waarschijnlijke oorzaak:</b> je opent de pagina zonder https. ' +
+                'Web Crypto werkt dan niet. Probeer https://bilblioven.tech');
+  }
+
+  uit.innerHTML = regels.join('<br>');
+});
 </script>
 </body>
 </html>
